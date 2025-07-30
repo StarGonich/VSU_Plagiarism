@@ -46,14 +46,14 @@ def plagiarism(G1, G2):
     return sum(G1_nodes_iso.values())/len(G1_nodes_iso)
 
 
-folder_path = 'archive_cpp/graphs'  # Укажите путь к вашей папке
+folder_path = 'graphs'  # Путь к папке с графами
 files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
 files_iso = {file: False for file in files}
 results = []
 for graph_subset in combinations(files, 2):
     G1_path, G2_path = graph_subset
-    G1 = nx.drawing.nx_agraph.read_dot(f"archive_cpp/graphs/{G1_path}")
-    G2 = nx.drawing.nx_agraph.read_dot(f"archive_cpp/graphs/{G2_path}")
+    G1 = nx.drawing.nx_agraph.read_dot(f"{folder_path}/{G1_path}")
+    G2 = nx.drawing.nx_agraph.read_dot(f"{folder_path}/{G2_path}")
     prepare_nodes(G1)
     prepare_nodes(G2)
     if G1.number_of_nodes() < G2.number_of_nodes():
@@ -80,7 +80,7 @@ with open("plagiarism_log.txt", "w", encoding="utf-8") as f:
     f.write("Результаты сравнения графов (отсортированы по убыванию res):\n")
     f.write("=" * 60 + "\n")
     for G1_name, G2_name, res in results:
-        f.write(f"{G1_name} vs {G2_name}: {res:.4f}\n")
+        f.write(f"{G1_name} & {G2_name}: {res:.4f}\n")
     f.write("=" * 60 + "\n")
     f.write("Итого в плагиате подозреваются:\n")
     for file in files_iso:
