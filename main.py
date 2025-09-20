@@ -1,9 +1,17 @@
 import os
+import functools
+
 import networkx as nx
 from itertools import combinations
 from tqdm import tqdm
 
+from LogParser import LogParser
+
 SUBGRAPH_SIZE = 4
+LOGPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\log.txt"
+ARCHIVEPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\602776"
+GRAPHSPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\graphs"
+cache = set()
 
 def prepare_nodes(graph):
     nodes_to_check = list(graph.nodes())
@@ -18,61 +26,73 @@ def print_labels(G):
         print(G.nodes[node]['NAME'])
 
 
-# Функция для генерации всех индуцированных подграфов
-def get_all_weakly_connected_subgraphs(graph):
+@functools.lru_cache(maxsize=None)
+def get_all_weakly_connected_subgraphs(G_path):
+    cache.add(G_path)
+    graph = nx.drawing.nx_agraph.read_dot(f"{GRAPHSPATH}/{G_path}")
+    prepare_nodes(graph)
     subgraphs = []
-    # Перебор всех комбинаций вершин
-    for node_subset in tqdm(tuple(combinations(graph.nodes(), SUBGRAPH_SIZE))):
+    for node_subset in tqdm(tuple(combinations(graph.nodes(), SUBGRAPH_SIZE)),
+                            desc=f"Subgraph combinations of {G_path}", position=1, ascii=True):
         subgraph = graph.subgraph(node_subset)
         if nx.is_weakly_connected(subgraph):
             subgraphs.append(subgraph)
     return subgraphs
 
 
-def plagiarism(G1, G2):
+def plagiarism(G1_path, G1, G2):
+    G1_all_subgraphs = get_all_weakly_connected_subgraphs(G1_path)
     G1_nodes_iso = {node: False for node in G1.nodes()}
-    G1_all_subgraphs = get_all_weakly_connected_subgraphs(G1)
-    print(f"Всего слабосвязных подграфов: {len(G1_all_subgraphs)}")
+    print(f"All weakly graphs: {len(G1_all_subgraphs)}")
     isomorphic_subgraphs = []
-    for subgraph in tqdm(G1_all_subgraphs):
+    for subgraph in tqdm(G1_all_subgraphs, desc=f"Isomorphism", leave=False, position=1, ascii=True):
         GM = nx.algorithms.isomorphism.DiGraphMatcher(G2, subgraph, node_match=lambda n1, n2: n1['NAME'] == n2['NAME'])
         if GM.subgraph_is_isomorphic():
             for node in subgraph.nodes():
                 G1_nodes_iso[node] = True
             isomorphic_subgraphs.append(subgraph)
-    print(f"Всего изоморфных подграфов: {len(isomorphic_subgraphs)}")
-    print(f"Результат: {sum(G1_nodes_iso.values())}/{len(G1_nodes_iso)}")
+    print(f"All isomorphic graphs: {len(isomorphic_subgraphs)}")
+    print(f"Result: {sum(G1_nodes_iso.values())}/{len(G1_nodes_iso)}")
     print("----------------------------------")
     return sum(G1_nodes_iso.values())/len(G1_nodes_iso)
 
 
-folder_path = 'graphs'  # Путь к папке с графами
-files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+files = [f for f in os.listdir(GRAPHSPATH) if os.path.isfile(os.path.join(GRAPHSPATH, f))]
+
+logparser = LogParser(LOGPATH, ARCHIVEPATH)
+logparser.parse()
+
 files_iso = {file: False for file in files}
 results = []
-for graph_subset in combinations(files, 2):
-    G1_path, G2_path = graph_subset
-    G1 = nx.drawing.nx_agraph.read_dot(f"{folder_path}/{G1_path}")
-    G2 = nx.drawing.nx_agraph.read_dot(f"{folder_path}/{G2_path}")
-    prepare_nodes(G1)
-    prepare_nodes(G2)
-    if G1.number_of_nodes() < G2.number_of_nodes():
-        print(G1_path, G2_path)
-        res = plagiarism(G1, G2)
-        if res > 0.5:
+too_large_graphs = []
+search = ['E']
+
+for problem in logparser.problems:
+    if problem.code not in search:
+        continue
+    print(problem.code, problem.name)
+    submissions = [sub for sub in problem.submissions if sub.verdict == 'OK']
+    for graph_subset in tqdm(tuple(combinations(submissions, 2)), desc="Combinations of programs", position=0, ascii=True):
+        G1_sub, G2_sub = graph_subset
+        G1_path = f"{os.path.splitext(G1_sub.filename)[0]}.dot"
+        G2_path = f"{os.path.splitext(G2_sub.filename)[0]}.dot"
+        G1 = nx.drawing.nx_agraph.read_dot(f"{GRAPHSPATH}/{G1_path}")
+        G2 = nx.drawing.nx_agraph.read_dot(f"{GRAPHSPATH}/{G2_path}")
+        prepare_nodes(G1)
+        prepare_nodes(G2)
+        print("Before swap:", G1_path, G2_path)
+        if G1_path not in cache and G2_path in cache or G1_path not in cache and G2_path not in cache and G1.number_of_nodes() > G2.number_of_nodes():
+            G1_path, G2_path = G2_path, G1_path
+            G1, G2 = G2, G1
+        print("After swap:", G1_path, G2_path)
+        res = plagiarism(G1_path, G1, G2)
+        if res > 0.6:
             files_iso[G1_path] = True
             files_iso[G2_path] = True
         results.append((G1_path, G2_path, res))
-    else:
-        print(G2_path, G1_path)
-        res = plagiarism(G2, G1)
-        if res > 0.5:
-            files_iso[G1_path] = True
-            files_iso[G2_path] = True
-        results.append((G2_path, G1_path, res))
 
 
-# Сортировка по убыванию res
+# Сортировка по убыванию
 results.sort(key=lambda x: x[2], reverse=True)
 
 # Запись в лог
