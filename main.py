@@ -7,22 +7,15 @@ from tqdm import tqdm
 
 from LogParser import LogParser
 
-SUBGRAPH_SIZE = 4
 LOGPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\log.txt"
 ARCHIVEPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\602776"
 GRAPHSPATH = r"C:\Users\Alexey\Documents\VKR\VSU_Plagiarism\graphs"
+
+SUBGRAPH_SIZE = 5
+SEARCH = 'K'
+PLAGIARISM_METRIC = 0.6
+
 cache = set()
-
-
-def esu_enumerate(G, k):
-    results = []
-    seen = set()
-
-    for v in G.nodes():
-        neighbors = set(G.predecessors(v)) | set(G.successors(v))
-        V_extension = {u for u in neighbors if u > v}
-        extend_subgraph(G, k, {v}, V_extension, v, results, seen)
-    return results
 
 
 def extend_subgraph(G, k, V_sub, V_ext, v, results, seen):
@@ -113,7 +106,7 @@ def plagiarism(G1_path, G1, G2):
 
 
 def printlog(problem, results):
-    with open(f"{problem.code}_log.txt", "w", encoding="utf-8") as f:
+    with open(f"{problem.code}{SUBGRAPH_SIZE}_log.txt", "w", encoding="utf-8") as f:
         f.write("Результаты сравнения графов (отсортированы по убыванию res):\n")
         f.write("=" * 60 + "\n")
         for G1_name, G2_name, res in results:
@@ -133,10 +126,9 @@ logparser.parse()
 
 results = []
 check_errors = []
-search = 'ABCDEFGHIJK'
 
 for problem in logparser.problems:
-    if problem.code not in search:
+    if problem.code not in SEARCH:
         continue
     files_iso = {sub.filename: False for sub in problem.submissions}
     print(problem.code, problem.name)
@@ -157,7 +149,7 @@ for problem in logparser.problems:
         print("After swap:", G1_path, G2_path)
         if G1.number_of_nodes() != 0:
             res = plagiarism(G1_path, G1, G2)
-            if res > 0.6:
+            if res > PLAGIARISM_METRIC:
                 files_iso[G1_path] = True
                 files_iso[G2_path] = True
             results.append((G1_path, G2_path, res))
