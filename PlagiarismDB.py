@@ -57,7 +57,7 @@ class PlagiarismDB:
     def connect_db(self):
         try:
             self.conn = sqlite3.connect(self.db_file)
-            print(f"Подключение к SQLite успешно: {self.db_file}")
+            # print(f"Подключение к SQLite успешно: {self.db_file}")
             return True
         except Error as e:
             print(f"Ошибка подключения: {e}")
@@ -569,4 +569,5 @@ if __name__ == "__main__":
     # print(db.get_final_results_by_filters(602776, 'C', 4))
     # print(db.teams)
     # print(db.submissions)
+
     db.close_db()

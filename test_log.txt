@@ -1,0 +1,17 @@
+
+@contest "tests"
+@contlen 999
+@problems 1
+@teams 2
+@submissions 2
+@p Z,Похожие числа,20,0
+@t 1,0,1,g39078=AlexeyVelichayshiy
+@t 2,0,1,g39078=DeepSeek
+@s 1,Z,1,100,OK
+@s 2,Z,1,101,OK
+@s 2,Z,1,102,OK
+@s 2,Z,1,103,OK
+@s 2,Z,1,104,OK
+@s 2,Z,1,111,OK
+@s 1,Z,1,200,OK
+@s 2,Z,1,202,OK

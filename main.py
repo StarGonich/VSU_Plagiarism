@@ -1,5 +1,7 @@
 import os
 import functools
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from io import StringIO
 
 import networkx as nx
@@ -9,16 +11,14 @@ from tqdm import tqdm
 
 from PlagiarismDB import PlagiarismDB, Submission
 
-LOGPATH = "log.txt"
-ARCHIVEPATH = "602776"
-GRAPHSDIR= "graphs"
-LOGSDIR = "logs"
+LOGPATH = "test_log.txt"
+ARCHIVEPATH = "-1"
+GRAPHSDIR= "test_graphs"
+LOGSDIR = "test_logs"
 
-SUBGRAPH_SIZE = 4
-SEARCH = 'C'
+SUBGRAPH_SIZE = 7
+SEARCH = 'Z'
 # PLAGIARISM_METRIC = 0.6
-
-cache = set()
 
 
 def extend_subgraph(G, k, V_sub, V_ext, v, results, seen):
@@ -60,13 +60,14 @@ def print_labels(G):
 
 @functools.lru_cache(maxsize=None)
 def get_all_weakly_connected_subgraphs(G_path):
-    cache.add(G_path)
     G = nx.drawing.nx_agraph.read_dot(f"{GRAPHSDIR}/{G_path}")
     prepare_nodes(G)
     subgraphs = []
     seen = set()
-    for v in tqdm(G.nodes(),
-                  desc=f"Getting subgraphs of {G_path}", position=1, leave=False, ascii=True, colour='yellow'):
+    pid = os.getpid()
+    for v in G.nodes:
+    # for v in tqdm(G.nodes(),
+    #               desc=f"Getting subgraphs of {G_path}", position=pid % mp.cpu_count(), leave=False, ascii=True, colour='yellow'):
         neighbors = set(G.predecessors(v)) | set(G.successors(v))
         V_extension = {u for u in neighbors if u > v}
         extend_subgraph(G, SUBGRAPH_SIZE, {v}, V_extension, v, subgraphs, seen)
@@ -77,8 +78,10 @@ def plagiarism(G1_path, G1, G2):
     G1_nodes_iso = {node: False for node in G1.nodes()}
     G1_all_subgraphs = get_all_weakly_connected_subgraphs(G1_path)
 
-    for subgraph in tqdm(G1_all_subgraphs,
-                         desc=f"Isomorphism", leave=False, position=1, ascii=True):
+    pid = os.getpid()
+    for subgraph in G1_all_subgraphs:
+    # for subgraph in tqdm(G1_all_subgraphs,
+    #                      desc=f"{pid}: {G1_path}", leave=False, position=os.getpid() % mp.cpu_count(), ascii=True):
         if all(G1_nodes_iso[node] for node in subgraph.nodes()):
             continue  # Пропускаем проверку изоморфизма
         is_isomorhic = nx.algorithms.isomorphism.DiGraphMatcher(
@@ -91,10 +94,10 @@ def plagiarism(G1_path, G1, G2):
     return sum(G1_nodes_iso.values())/len(G1_nodes_iso)
 
 
-def printlog(problem, results):
+def printlog(problem, results, errors):
     if not os.path.exists(LOGSDIR):
         os.makedirs(LOGSDIR)
-    log_file_path = os.path.join(LOGSDIR, f"{problem.code}_log.txt")
+    log_file_path = os.path.join(LOGSDIR, f"{problem.code}{SUBGRAPH_SIZE}_Pool_log.txt")
     with open(f"{log_file_path}", "w", encoding="utf-8") as f:
         f.write("Результаты сравнения графов (отсортированы по убыванию итогового результата):\n")
         f.write("=" * 60 + "\n")
@@ -116,7 +119,7 @@ def printlog(problem, results):
     print(f"\nЛог сохранён в {log_file_path}")
 
 
-def get_graph_code(submission: Submission):
+def get_graph_code(db, submission: Submission):
     cursor = db.conn.cursor()
     cursor.execute("""
             SELECT graph FROM submissions WHERE submission_id = ?
@@ -135,55 +138,72 @@ def get_graph_code(submission: Submission):
     return result[0]
 
 
-# files = [f for f in os.listdir(GRAPHSDIR) if os.path.isfile(os.path.join(GRAPHSDIR, f))]
+def process_combination(args):
+    """Обработка одной комбинации графов"""
+    G1_sub, G2_sub, SUBGRAPH_SIZE, GRAPHSDIR = args
+    db = PlagiarismDB('plagiarism.db')
+    db.connect_db()
 
-db = PlagiarismDB('plagiarism.db')
-db.parse(LOGPATH, ARCHIVEPATH)
-problems = db.get_problems_by_contest(int(ARCHIVEPATH))
-
-results = []
-errors = set()
-
-for problem in problems:
-    if problem.code not in SEARCH:
-        continue
-    # files_iso = {sub.filename: False for sub in problem.submissions}
-    submissions = [sub for sub in db.get_submissions_by_problem(problem.id) if sub.verdict == 'OK']
-    for graph_subset in tqdm(tuple(combinations(submissions, 2)),
-                             desc=f"{problem.code}-{problem.name}: combinations of programs", position=0, ascii=True, colour='green'):
-        G1_sub, G2_sub = graph_subset
-
+    try:
         G1_dotpath = f"{G1_sub.submission_id}.dot"
         G2_dotpath = f"{G2_sub.submission_id}.dot"
-        get_graph_code(G1_sub)
-        get_graph_code(G2_sub)
-        # G1 = nx.nx_agraph.read_dot(StringIO(get_graph_code(G1_sub)))
-        # G2 = nx.nx_agraph.read_dot(StringIO(get_graph_code(G2_sub)))
+
+        get_graph_code(db, G1_sub)
+        get_graph_code(db, G2_sub)
+
         G1 = nx.drawing.nx_agraph.read_dot(f"./{GRAPHSDIR}/{G1_dotpath}")
         G2 = nx.drawing.nx_agraph.read_dot(f"./{GRAPHSDIR}/{G2_dotpath}")
+
         prepare_nodes(G1)
         if G1.number_of_nodes() == 0:
-            errors.add(G1_dotpath)
-            continue
+            return (G1_sub, G2_sub, 0, 0, 0, G1_dotpath)
         prepare_nodes(G2)
         if G2.number_of_nodes() == 0:
-            errors.add(G2_dotpath)
-            continue
-        # if G1_dotpath not in cache and (G2_dotpath in cache or G1.number_of_nodes() > G2.number_of_nodes()):
-        #     G1_sub, G2_sub = G2_sub, G1_sub
-        #     G1_dotpath, G2_dotpath = G2_dotpath, G1_dotpath
-        #     G1, G2 = G2, G1
+            return (G1_sub, G2_sub, 0, 0, 0, G2_dotpath)
+
         res1 = plagiarism(G1_dotpath, G1, G2)
         res2 = plagiarism(G2_dotpath, G2, G1)
+
         db.save_result(G1_sub.submission_id, G2_sub.submission_id, SUBGRAPH_SIZE, res1)
         db.save_result(G2_sub.submission_id, G1_sub.submission_id, SUBGRAPH_SIZE, res2)
+
         mn = min(res1, res2)
-        # if min(res1, res2) > PLAGIARISM_METRIC:
-        #     files_iso[G1_dotpath] = True
-        #     files_iso[G2_dotpath] = True
-        results.append((G1_sub, G2_sub, res1, res2, mn))
-    results.sort(key=lambda x: x[4], reverse=True)
-    printlog(problem, results)
-    results.clear()
-    errors.clear()
-    get_all_weakly_connected_subgraphs.cache_clear()
+        return (G1_sub, G2_sub, res1, res2, mn, None)
+
+    finally:
+        db.close_db()
+
+
+if __name__ == '__main__':
+    db = PlagiarismDB('plagiarism.db')
+    db.connect_db()
+    db.parse(LOGPATH, ARCHIVEPATH)
+    problems = db.get_problems_by_contest(int(ARCHIVEPATH))
+
+    results = []
+    errors = set()
+
+    for problem in problems:
+        if problem.code not in SEARCH:
+            continue
+        submissions = [sub for sub in db.get_submissions_by_problem(problem.id) if sub.verdict == 'OK']
+        combinations_list = list(combinations(submissions, 2))
+        # print(combinations_list)
+        args = [(G1_sub, G2_sub, SUBGRAPH_SIZE, GRAPHSDIR)
+                for G1_sub, G2_sub in combinations_list]
+        # Обрабатываем комбинации параллельно
+        with mp.Pool(processes=mp.cpu_count()) as p:
+            for result in tqdm(p.imap_unordered(process_combination, args),
+                               total=len(args),
+                               desc=f"{problem.code}",
+                               position=0):
+                # print(result[0], result[1], result[2], result[3], result[4])
+                if result[5]:  # error path
+                    errors.add(result[5])
+                else:
+                    results.append(result[:5])  # (G1_sub, G2_sub, res1, res2, mn)
+        results.sort(key=lambda x: x[4], reverse=True)
+        printlog(problem, results, errors)
+        results.clear()
+        errors.clear()
+        get_all_weakly_connected_subgraphs.cache_clear()
